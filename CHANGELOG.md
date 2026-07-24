@@ -2,6 +2,10 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
+## Unreleased (fork)
+
+- Feat: `graphify graph3d` renders an interactive 3D force-directed HTML view of `graph.json` (WebGL via `3d-force-graph`, MIT, CDN-loaded — the same habit as the `tree` viewer's D3). Unlike the flat `graph.html`, which lays the graph out undirected with no arrowheads, the 3D view *draws edge direction* (`source → target`) as arrows, so `calls` / `imports` / `inherits` read directionally; rotate/zoom, click a node to focus it and list its typed relations, and search by label. Community colors (`exporters.base.COMMUNITY_COLORS`) and the graph-size cap are shared with the existing exporters, and node labels are HTML-escaped at render time so a hostile label can't inject markup into the local report. Proposed upstream as Graphify-Labs/graphify#2170.
+
 ## 0.9.53 (2026-08-30)
 
 - Fix: a batch of cross-language inheritance-edge corrections (thanks @Synvoya): JavaScript `class X extends Y` now emits an `inherits` edge (#1790); PHP interfaces, enums, and traits are captured as class-like nodes with their heritage (#1791); Scala `trait` declarations become class-like nodes (#1792) and qualified `extends`/`with` bases resolve to the tail type (#1794); a qualified Kotlin supertype resolves to its tail type instead of the package head (#1793); a C# interface extending an interface is classified as `inherits`, not `implements` (#1817); and a Go interface type-set constraint no longer emits a spurious `embeds` edge (#1818).
