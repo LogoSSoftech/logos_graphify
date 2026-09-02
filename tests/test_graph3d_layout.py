@@ -3,6 +3,7 @@ import subprocess
 import sys
 
 from graphify.graph3d_layout import (
+    component_ids,
     shape_signature,
     spectral_signature_positions,
 )
@@ -162,3 +163,53 @@ def test_flat_body_still_spreads_its_islands():
     pos = spectral_signature_positions(nodes, links)
     iso = [pos[f"iso{i}"] for i in range(6)]
     assert len(set(iso)) == 6
+
+
+def test_scale_is_robust_to_a_single_outlier():
+    """One far-flung pendant node must not squeeze the bulk into a dot.
+
+    Scaling on the maximum let a single extreme coordinate set the world size, so
+    the body collapsed to the centre: 69% of a real 6k-node graph landed inside the
+    innermost 10% of the radius. Scaling on a percentile (outliers compressed, not
+    clipped) keeps the mass spread out.
+    """
+    import numpy as np
+
+    # a dense blob plus one long tail — the tail node is the outlier
+    nodes = [f"b{i}" for i in range(60)] + ["tail1", "tail2", "tail3"]
+    links = [(f"b{i}", f"b{j}") for i in range(30) for j in range(i + 1, 30)]
+    links += [(f"b{i}", f"b{i+1}") for i in range(30, 59)]
+    links += [("b59", "tail1"), ("tail1", "tail2"), ("tail2", "tail3")]
+
+    pos = spectral_signature_positions(nodes, links)
+    P = np.array(list(pos.values()))
+    P = P - P.mean(axis=0)
+    r = np.linalg.norm(P, axis=1)
+    r = r / max(r.max(), 1e-9)
+    assert (r < 0.10).mean() < 0.35, "the bulk is still crushed at the centre"
+
+
+def test_relation_type_changes_the_shape():
+    """The mix of relations must bend the geometry, or the weights do nothing."""
+    nodes = [f"n{i}" for i in range(24)]
+    edges = [(f"n{i}", f"n{i+1}") for i in range(23)]
+    as_inherits = spectral_signature_positions(nodes, [(u, v, "inherits") for u, v in edges])
+    as_imports = spectral_signature_positions(nodes, [(u, v, "imports") for u, v in edges])
+    assert as_inherits != as_imports
+
+
+def test_unweighted_mode_ignores_relations():
+    nodes = [f"n{i}" for i in range(20)]
+    edges = [(f"n{i}", f"n{i+1}") for i in range(19)]
+    a = spectral_signature_positions(nodes, [(u, v, "inherits") for u, v in edges], weighted=False)
+    b = spectral_signature_positions(nodes, [(u, v, "imports") for u, v in edges], weighted=False)
+    assert a == b
+
+
+def test_component_ids_ranks_giant_first():
+    nodes = [f"a{i}" for i in range(9)] + [f"b{i}" for i in range(3)] + ["solo"]
+    links = [(f"a{i}", f"a{i+1}") for i in range(8)] + [(f"b{i}", f"b{i+1}") for i in range(2)]
+    ids = component_ids(nodes, links)
+    assert all(ids[f"a{i}"] == 0 for i in range(9))
+    assert len({ids[f"b{i}"] for i in range(3)}) == 1
+    assert ids["b0"] > 0 and ids["solo"] > 0

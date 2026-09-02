@@ -28,6 +28,7 @@ def build_graph3d_data(
     graph: Dict[str, Any],
     labels: Optional[Dict[int, str]] = None,
     positions: Optional[Dict[Any, Any]] = None,
+    components: Optional[Dict[Any, int]] = None,
 ) -> Dict[str, Any]:
     """Shape graph.json into ``{nodes, links}`` for 3d-force-graph.
 
@@ -65,6 +66,8 @@ def build_graph3d_data(
             "source_location": n.get("source_location") or "",
             "degree": degree.get(n["id"], 0),
         }
+        if components is not None:
+            entry["component"] = int(components.get(n["id"], 0))
         if positions is not None:
             p = positions.get(n["id"])
             if p is not None:
@@ -127,20 +130,28 @@ def write_graph3d_html(
             labels = {}
 
     positions = None
+    components = None
     aspect = ""
     if layout == "signature":
-        from graphify.graph3d_layout import shape_signature, spectral_signature_positions
+        from graphify.graph3d_layout import (
+            component_ids,
+            shape_signature,
+            spectral_signature_positions,
+        )
 
         node_ids = [n["id"] for n in graph.get("nodes", [])]
         raw = graph.get("links") or graph.get("edges") or []
-        pairs = [(e["source"], e["target"]) for e in raw
+        # the relation rides along: it picks the coupling strength, so the mix of
+        # relations a codebase uses bends its shape
+        pairs = [(e["source"], e["target"], e.get("relation")) for e in raw
                  if e.get("source") is not None and e.get("target") is not None]
         positions = spectral_signature_positions(node_ids, pairs)
+        components = component_ids(node_ids, pairs)
         sig = shape_signature(positions)
         if sig["aspect"]:
             aspect = " · shape " + " : ".join(f"{a:.2f}" for a in sig["aspect"])
 
-    data = build_graph3d_data(graph, labels, positions)
+    data = build_graph3d_data(graph, labels, positions, components)
     name = project_label or "Knowledge Graph"
     html = emit_html(
         data,
@@ -164,6 +175,7 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
   #info{position:fixed;top:10px;right:10px;width:280px;background:#141726ee;
         border:1px solid #2a2f45;border-radius:8px;padding:12px;z-index:5;max-height:80vh;overflow:auto}
   #info b{color:#8ab4ff}
+  #islands{position:fixed;bottom:16px;left:266px;z-index:5;font-size:12px;opacity:.75;cursor:pointer}
   #search{position:fixed;bottom:14px;left:14px;z-index:5;padding:7px 10px;border-radius:6px;
           border:1px solid #2a2f45;background:#141726;color:#cdd3e0;width:240px}
   .rel{color:#e0b070}
@@ -174,6 +186,7 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
   <small>Drag: rotate &middot; Wheel: zoom &middot; Click node: focus &middot; Arrows = direction (source&rarr;target)</small></div>
 <div id="info">Click a node to inspect it.</div>
 <input id="search" placeholder="Search node... (Enter)">
+<label id="islands"><input type="checkbox" checked> islands</label>
 <div id="g"></div>
 <script>
 const DATA = %%DATA%%;
@@ -209,6 +222,21 @@ const G = ForceGraph3D()(document.getElementById('g'))
         + `<hr style="border-color:#2a2f45">${out.slice(0,60).join('<br>')||'(no relations)'}`
         + (out.length>60?`<br>&hellip; +${out.length-60} more`:'');
   });
+// Islands toggle: on a graph with hundreds of tiny components the spiral arm can
+// drown the main body, so it can be dropped without regenerating the file. Both
+// datasets are built before the engine mutates link endpoints into node objects.
+const MAIN_IDS = new Set(DATA.nodes.filter(n => !n.component).map(n => n.id));
+const MAIN = {
+  nodes: DATA.nodes.filter(n => MAIN_IDS.has(n.id)),
+  links: DATA.links.filter(l => MAIN_IDS.has(l.source.id || l.source)
+                             && MAIN_IDS.has(l.target.id || l.target)),
+};
+const islandsBox = document.querySelector('#islands input');
+if (DATA.nodes.some(n => n.component)) {
+  islandsBox.addEventListener('change', e => G.graphData(e.target.checked ? DATA : MAIN));
+} else {
+  document.getElementById('islands').style.display = 'none';
+}
 document.getElementById('search').addEventListener('keydown', e => {
   if(e.key!=='Enter') return;
   const q=e.target.value.toLowerCase();
