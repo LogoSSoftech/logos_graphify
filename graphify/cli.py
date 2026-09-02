@@ -2540,6 +2540,7 @@ def dispatch_command(cmd: str) -> None:
         graph_path = Path(_GRAPHIFY_OUT) / "graph.json"
         output_path: "_Opt[Path]" = None
         project_label: "_Opt[str]" = None
+        layout = "force"
         args = sys.argv[2:]
         i_arg = 0
         while i_arg < len(args):
@@ -2550,14 +2551,24 @@ def dispatch_command(cmd: str) -> None:
                 output_path = Path(args[i_arg + 1]); i_arg += 2
             elif a == "--label" and i_arg + 1 < len(args):
                 project_label = args[i_arg + 1]; i_arg += 2
+            elif a == "--layout" and i_arg + 1 < len(args):
+                layout = args[i_arg + 1].strip().lower(); i_arg += 2
+            elif a.startswith("--layout="):
+                layout = a.split("=", 1)[1].strip().lower(); i_arg += 1
             elif a in ("-h", "--help"):
-                print("Usage: graphify graph3d [--graph PATH] [--output HTML] [--label NAME]")
+                print("Usage: graphify graph3d [--graph PATH] [--output HTML] [--label NAME] [--layout MODE]")
                 print("  --graph PATH         path to graph.json (default graphify-out/graph.json)")
                 print("  --output HTML        output path (default graphify-out/GRAPH_3D.html)")
                 print("  --label NAME         project label shown in the page header")
+                print("  --layout MODE        force (default) | signature")
+                print("                       signature: shape derived from the graph's own")
+                print("                       spectrum, so each codebase gets a distinct silhouette")
                 return
             else:
                 i_arg += 1
+        if layout not in ("force", "signature"):
+            print(f"error: unknown --layout {layout!r} (expected: force, signature)", file=sys.stderr)
+            sys.exit(1)
         if not graph_path.is_file():
             print(f"error: graph.json not found at {graph_path}", file=sys.stderr)
             sys.exit(1)
@@ -2566,7 +2577,7 @@ def dispatch_command(cmd: str) -> None:
             output_path = graph_path.parent / "GRAPH_3D.html"
         out = write_graph3d_html(
             graph_path=graph_path, output_path=output_path,
-            project_label=project_label,
+            project_label=project_label, layout=layout,
         )
         size_kb = out.stat().st_size / 1024
         print(f"wrote {out} ({size_kb:.1f} KB)")
