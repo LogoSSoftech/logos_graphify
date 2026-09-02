@@ -25,7 +25,9 @@ _CDN = "https://unpkg.com/3d-force-graph@1"
 
 
 def build_graph3d_data(
-    graph: Dict[str, Any], labels: Optional[Dict[int, str]] = None
+    graph: Dict[str, Any],
+    labels: Optional[Dict[int, str]] = None,
+    positions: Optional[Dict[Any, Any]] = None,
 ) -> Dict[str, Any]:
     """Shape graph.json into ``{nodes, links}`` for 3d-force-graph.
 
@@ -34,6 +36,10 @@ def build_graph3d_data(
     Links keep ``relation`` and ``confidence`` so the tooltip can name the edge and
     the renderer can dim ``INFERRED`` edges. Dangling links (an endpoint absent from
     ``nodes``) are dropped so the force engine never fabricates ghost nodes.
+
+    When ``positions`` is given, each node also carries ``x/y/z`` plus the pinning
+    fields ``fx/fy/fz`` that d3-force honours, so the precomputed shape is what gets
+    drawn instead of whatever the simulation would settle into.
     """
     labels = labels or {}
     raw_links: List[Dict[str, Any]] = list(graph.get("links") or graph.get("edges") or [])
@@ -50,7 +56,7 @@ def build_graph3d_data(
         cname = n.get("community_name") or labels.get(cid) or (
             f"Community {cid}" if cid is not None else "unknown"
         )
-        nodes.append({
+        entry = {
             "id": n["id"],
             "label": n.get("label") or n["id"],
             "community": cid,
@@ -58,7 +64,13 @@ def build_graph3d_data(
             "source_file": n.get("source_file") or "",
             "source_location": n.get("source_location") or "",
             "degree": degree.get(n["id"], 0),
-        })
+        }
+        if positions is not None:
+            p = positions.get(n["id"])
+            if p is not None:
+                x, y, z = (list(p) + [0.0, 0.0, 0.0])[:3]
+                entry.update({"x": x, "y": y, "z": z, "fx": x, "fy": y, "fz": z})
+        nodes.append(entry)
 
     links = [{
         "source": e["source"],
@@ -70,18 +82,22 @@ def build_graph3d_data(
     return {"nodes": nodes, "links": links}
 
 
-def emit_html(data: Dict[str, Any], *, title: str, header: str) -> str:
+def emit_html(data: Dict[str, Any], *, title: str, header: str, frozen: bool = False) -> str:
     # ensure_ascii + escaping `</` keeps embedded JSON from breaking out of the
     # <script> tag; every value that later lands in innerHTML is run through the
     # JS esc() helper below, so a hostile node label (e.g. from a scraped doc)
     # cannot inject markup into the local report (cf. exporters/html.py, #1838).
     data_json = json.dumps(data, ensure_ascii=True, separators=(",", ":")).replace("</", "<\\/")
     palette_json = json.dumps(COMMUNITY_COLORS)
+    # A precomputed layout is authoritative: stop the engine on frame 0 so the
+    # simulation cannot drift the shape it was given.
+    cooldown = ".cooldownTicks(0)" if frozen else ".cooldownTime(15000)"
     return (
         _HTML_TEMPLATE
         .replace("%%TITLE%%", _html.escape(title))
         .replace("%%HEADER%%", _html.escape(header))
         .replace("%%PALETTE%%", palette_json)
+        .replace("%%COOLDOWN%%", cooldown)
         .replace("%%DATA%%", data_json)
     )
 
@@ -91,6 +107,7 @@ def write_graph3d_html(
     output_path: Path,
     *,
     project_label: Optional[str] = None,
+    layout: str = "force",
 ) -> Path:
     from graphify.security import check_graph_file_size_cap
 
@@ -109,12 +126,27 @@ def write_graph3d_html(
         except Exception:
             labels = {}
 
-    data = build_graph3d_data(graph, labels)
+    positions = None
+    aspect = ""
+    if layout == "signature":
+        from graphify.graph3d_layout import shape_signature, spectral_signature_positions
+
+        node_ids = [n["id"] for n in graph.get("nodes", [])]
+        raw = graph.get("links") or graph.get("edges") or []
+        pairs = [(e["source"], e["target"]) for e in raw
+                 if e.get("source") is not None and e.get("target") is not None]
+        positions = spectral_signature_positions(node_ids, pairs)
+        sig = shape_signature(positions)
+        if sig["aspect"]:
+            aspect = " · shape " + " : ".join(f"{a:.2f}" for a in sig["aspect"])
+
+    data = build_graph3d_data(graph, labels, positions)
     name = project_label or "Knowledge Graph"
     html = emit_html(
         data,
         title=f"{name} — graphify 3D viewer",
-        header=f"{name} — {len(data['nodes'])} nodes / {len(data['links'])} edges",
+        header=f"{name} — {len(data['nodes'])} nodes / {len(data['links'])} edges{aspect}",
+        frozen=positions is not None,
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(html, encoding="utf-8")
@@ -161,7 +193,7 @@ const G = ForceGraph3D()(document.getElementById('g'))
   .linkOpacity(0.35).linkWidth(0)
   .linkDirectionalArrowLength(3.2).linkDirectionalArrowRelPos(1)
   .linkLabel(l => `<span class="rel">${esc(l.relation)}</span> ${esc(l.confidence)}`)
-  .cooldownTime(15000)
+  %%COOLDOWN%%
   .onNodeClick(n => {
      const r = 1 + 90/Math.hypot(n.x||1,n.y||1,n.z||1);
      G.cameraPosition({x:n.x*r,y:n.y*r,z:n.z*r}, n, 1200);
