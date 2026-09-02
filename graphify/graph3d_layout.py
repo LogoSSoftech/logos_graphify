@@ -214,7 +214,18 @@ def spectral_signature_positions(
     # hug the shape instead of hiding it.
     ga = math.pi * (3.0 - math.sqrt(5.0))
     body = np.abs(main * scale).max(axis=0)
-    body = body / max(float(body.max()), _EPS)     # relative extent per axis
+    body_max = float(body.max())
+    if body_max <= _EPS:
+        # Degenerate main body (a lone node, or a graph with no edges at all): there
+        # is no shape to follow, and dividing through would park every satellite at
+        # the origin — all nodes stacked on one invisible point. Fall back to a
+        # plain isotropic shell, which is the honest picture of a graph with no
+        # structure to show.
+        body = np.ones(dim, dtype=np.float64)
+    else:
+        # Floor each axis so a near-flat body still spreads its islands instead of
+        # crushing them onto a line or a plane.
+        body = np.maximum(body / body_max, 0.12)
     shell = world * 0.62
     for k, (comp, emb) in enumerate(zip(comps[1:], embeddings[1:]), start=1):
         y = 1.0 - (2.0 * k) / max(len(comps) - 1, 1) if len(comps) > 2 else 0.0

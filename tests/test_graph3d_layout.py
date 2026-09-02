@@ -138,3 +138,27 @@ def test_force_layout_stays_unpinned(tmp_path):
     html = dest.read_text(encoding="utf-8")
     assert "cooldownTime(15000)" in html
     assert '"fx":' not in html
+
+
+def test_edgeless_graph_does_not_collapse_to_a_point():
+    """A graph with no edges has no shape — but its nodes must still be distinct.
+
+    Every node is its own component, so the "main body" has zero extent; dividing
+    the satellite shell through by that extent parked all of them at the origin
+    (all nodes stacked on one invisible point). Real stub apps hit this:
+    domina_megasoft and domina_hr_ve are 8 nodes with 0 edges.
+    """
+    nodes = [f"s{i}" for i in range(8)]
+    pos = spectral_signature_positions(nodes, [])
+    assert set(pos) == set(nodes)
+    assert len(set(pos.values())) == len(nodes), "nodes collapsed onto each other"
+    assert any(any(abs(c) > 1.0 for c in p) for p in pos.values())
+
+
+def test_flat_body_still_spreads_its_islands():
+    """A near-flat main body must not crush its satellites onto a line."""
+    nodes, links = _chain(30)
+    nodes = nodes + [f"iso{i}" for i in range(6)]
+    pos = spectral_signature_positions(nodes, links)
+    iso = [pos[f"iso{i}"] for i in range(6)]
+    assert len(set(iso)) == 6
